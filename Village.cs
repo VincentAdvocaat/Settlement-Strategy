@@ -80,6 +80,7 @@ internal class Walker(Vector2I home)
     public Vector2I Tile { get; private set; } = home;
     public Vector2 Visual { get; private set; } = home;
     private readonly Queue<Vector2I> route = new();
+    public IEnumerable<Vector2I> RemainingRoute => route;
     private float progress;
 
     public void SetRoute(List<Vector2I> path)
@@ -145,7 +146,7 @@ internal sealed class Village
     public static bool Inside(Vector2I tile) => tile.X >= 0 && tile.X < Width && tile.Y >= 0 && tile.Y < Height;
     public Building? At(Vector2I tile) => Buildings.FirstOrDefault(building => building.Position == tile);
     private static IEnumerable<Vector2I> Neighbors(Vector2I tile) => Directions.Select(direction => tile + direction);
-    private bool Walkable(Vector2I tile) => Roads.Contains(tile) || Ground(tile) == Terrain.Bridge && Inside(tile);
+    public bool Walkable(Vector2I tile) => Roads.Contains(tile) || Ground(tile) == Terrain.Bridge && Inside(tile);
     private IEnumerable<Vector2I> Access(Building building) => Neighbors(building.Position).Where(Walkable);
 
     public string? Place(string tool, Vector2I tile, bool preview = false)
@@ -188,8 +189,13 @@ internal sealed class Village
         return null;
     }
 
+    public bool ConnectedRoad(Vector2I tile) => Walkable(tile) &&
+        FindRoute(Depot + Vector2I.Right, new[] { tile }) != null;
+
     public bool Connected(Building building) =>
         FindRoute(Depot + Vector2I.Right, Access(building)) != null;
+
+    public IEnumerable<Vector2I> AdjacentTiles(Vector2I tile) => Neighbors(tile).Where(Inside);
 
     private int Demand(Building building, string good) => building.Complete
         ? building.Data.Input == good ? building.Data.Capacity - building.Stock.GetValueOrDefault(good) : 0

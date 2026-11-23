@@ -19,6 +19,10 @@ public partial class Main : Node2D
     private Vector2I? roadAnchor;
     private float accumulator;
     private int speed = 1;
+    private readonly List<Vector2I> roadPreview = new();
+    private readonly HashSet<Vector2I> roadPreviewTiles = new();
+    private readonly List<Button> HudControls = new();
+    private int completedSites;
     private Button pause = null!;
     private Button fast = null!;
     private readonly Dictionary<string, Button> toolButtons = new();
@@ -35,8 +39,10 @@ public partial class Main : Node2D
         }
         pause = AddButton("Pauze", 803, 84, 86, TogglePause);
         fast = AddButton("1×", 897, 84, 65, ToggleFast);
-        AddButton("Herstart", 970, 84, 122, Reset);
+        AddButton("Menu  Esc", 970, 84, 122, () => ShowMenu(Menu.Pause));
+        GetTree().AutoAcceptQuit = false;
         Choose("inspect");
+        InitMenus();
     }
 
     private Button AddButton(string label, float x, float y, float width, Action action)
@@ -50,7 +56,9 @@ public partial class Main : Node2D
         };
         button.AddThemeColorOverride("font_color", Paper);
         button.AddThemeColorOverride("font_hover_color", Gold);
+        button.AddThemeFontSizeOverride("font_size", GuiFont(14));
         button.Pressed += action;
+        HudControls.Add(button);
         AddChild(button);
         return button;
     }
@@ -59,6 +67,7 @@ public partial class Main : Node2D
     {
         village = new Village(Rules.Load("res://data/demo.json"));
         selected = null;
+        completedSites = 1;
         accumulator = 0;
         speed = 1;
         Choose("inspect");
@@ -88,6 +97,7 @@ public partial class Main : Node2D
     {
         tool = id;
         roadAnchor = null;
+        ClearRoadPreview();
         feedback = id switch
         {
             "road" => "Klik of sleep over vrije tegels. Verbind de werkplaatsen met de weg bij de schuur.",
@@ -102,6 +112,12 @@ public partial class Main : Node2D
 
     public override void _Process(double delta)
     {
+        UpdateMenus(delta);
+        if (currentMenu != Menu.None)
+        {
+            QueueRedraw();
+            return;
+        }
         accumulator += (float)Math.Min(delta, 0.1) * speed;
         const float tick = 1f / 30;
         while (accumulator >= tick)
@@ -109,6 +125,9 @@ public partial class Main : Node2D
             village.Tick(tick);
             accumulator -= tick;
         }
+        int nowComplete = village.Buildings.Count(building => building.Complete);
+        if (nowComplete > completedSites) PlayCue(completeSound);
+        completedSites = nowComplete;
         QueueRedraw();
     }
 
@@ -131,21 +150,60 @@ public partial class Main : Node2D
             feedback = error;
             return;
         }
-        if (tool == "road")
-        {
-            selected = village.At(tile);
-            feedback = "Weg gepland. De bezorger brengt steen, daarna bouwt de bouwer de tegel.";
-            return;
-        }
         selected = village.At(tile);
+        PlayCue(clickSound);
         feedback = selected == null ? "" : $"{selected.Data.Label} geplaatst.";
         tool = "inspect";
         foreach (var (name, button) in toolButtons)
             button.Modulate = name == tool ? Gold : Colors.White;
     }
 
+    public override void _Input(InputEvent input)
+    {
+        if (input is not InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }) return;
+        HandleEscape();
+        GetViewport().SetInputAsHandled();
+    }
+
+    private void ClearRoadPreview()
+    {
+        roadPreview.Clear();
+        roadPreviewTiles.Clear();
+    }
+
+    private void ExtendRoadPreview(Vector2I tile)
+    {
+        if (roadAnchor is not Vector2I anchor) return;
+        while (anchor != tile)
+        {
+            anchor += anchor.X != tile.X
+                ? new Vector2I(Math.Sign(tile.X - anchor.X), 0)
+                : new Vector2I(0, Math.Sign(tile.Y - anchor.Y));
+            if (roadPreviewTiles.Add(anchor)) roadPreview.Add(anchor);
+        }
+        roadAnchor = anchor;
+    }
+
+    private void CommitRoad()
+    {
+        string? error = roadPreview.Select(tile => village.Place("road", tile, preview: true))
+            .FirstOrDefault(message => message != null);
+        if (error != null)
+            feedback = $"Route geweigerd. {error}";
+        else
+        {
+            foreach (var tile in roadPreview) village.Place("road", tile);
+            selected = roadAnchor is Vector2I last ? village.At(last) : selected;
+            feedback = "Weg gepland. Bezorgers en bouwers werken tegel voor tegel.";
+            PlayCue(clickSound);
+        }
+        roadAnchor = null;
+        ClearRoadPreview();
+    }
+
     public override void _UnhandledInput(InputEvent input)
     {
+        if (currentMenu != Menu.None) return;
         if (input is InputEventKey { Pressed: true, Echo: false } key)
         {
             switch (key.Keycode)
@@ -156,38 +214,51 @@ public partial class Main : Node2D
                 case Key.Key4: Choose("woodcamp"); break;
                 case Key.Key5: Choose("sawmill"); break;
                 case Key.Space: TogglePause(); break;
-                case Key.Escape: Choose("inspect"); break;
             }
         }
-        var tile = TileAt(GetGlobalMousePosition());
+        if (input is not InputEventMouse pointer) return;
+        var tile = TileAt(GetGlobalTransformWithCanvas().AffineInverse() * pointer.Position);
         if (input is InputEventMouseButton mouse)
         {
             if (mouse.ButtonIndex == MouseButton.Right && mouse.Pressed) Choose("inspect");
             if (mouse.ButtonIndex != MouseButton.Left) return;
-            if (!mouse.Pressed)
+            if (tool == "road")
+            {
+                if (mouse.Pressed && Village.Inside(tile))
+                {
+                    roadAnchor = tile;
+                    roadPreview.Add(tile);
+                    roadPreviewTiles.Add(tile);
+                }
+                else if (!mouse.Pressed && roadAnchor != null)
+                {
+                    if (Village.Inside(tile))
+                    {
+                        ExtendRoadPreview(tile);
+                        CommitRoad();
+                    }
+                    else
+                    {
+                        Choose("road");
+                        feedback = "Route geannuleerd buiten de kaart.";
+                    }
+                }
+            }
+            else if (mouse.Pressed && Village.Inside(tile)) PlaceAt(tile);
+        }
+        else if (input is InputEventMouseMotion motion && roadAnchor != null)
+        {
+            if ((motion.ButtonMask & MouseButtonMask.Left) == 0)
             {
                 roadAnchor = null;
-                return;
+                ClearRoadPreview();
             }
-            if (!Village.Inside(tile)) return;
-            PlaceAt(tile);
-            if (tool == "road") roadAnchor = tile;
+            else if (Village.Inside(tile)) ExtendRoadPreview(tile);
         }
-        if (input is not InputEventMouseMotion motion || roadAnchor is not Vector2I anchor ||
-            (motion.ButtonMask & MouseButtonMask.Left) == 0 || !Village.Inside(tile)) return;
-
-        while (anchor != tile)
-        {
-            anchor += anchor.X != tile.X
-                ? new Vector2I(Math.Sign(tile.X - anchor.X), 0)
-                : new Vector2I(0, Math.Sign(tile.Y - anchor.Y));
-            PlaceAt(anchor);
-        }
-        roadAnchor = anchor;
     }
 
     private void Text(string text, float x, float y, int size, Color color) =>
-        DrawString(ThemeDB.FallbackFont, new Vector2(x, y), text, HorizontalAlignment.Left, -1, size, color);
+        DrawString(ThemeDB.FallbackFont, new Vector2(x, y), text, HorizontalAlignment.Left, -1, GuiFont(size), color);
 
     private void Box(Vector2 position, Vector2 size, Color color) => DrawRect(new Rect2(position, size), color);
     private static Vector2 PositionOf(Vector2 tile) => Origin + Tile * tile;
@@ -296,31 +367,89 @@ public partial class Main : Node2D
             DrawRect(new Rect2(pos + Vector2.One * 2, Vector2.One * 38), Gold, false, 2);
     }
 
+    private string SiteState(Building building, Builder? builder)
+    {
+        if (!village.Connected(building)) return "Geen weg";
+        if (!building.Supplied) return "Materiaal";
+        if (builder == null) return "Wacht op bouwer";
+        return builder.Working ? "In aanbouw" : "Bouwer onderweg";
+    }
+
+    private void DrawSiteStatus(Building building)
+    {
+        if (building.Complete) return;
+        var state = SiteState(building, village.Builders.FirstOrDefault(worker => worker.Site == building));
+        var (icon, color) = state switch
+        {
+            "Geen weg" => ("!", new Color("#f0927b")),
+            "Materiaal" => ("M", Gold),
+            "Wacht op bouwer" => ("B", new Color("#b3c3d9")),
+            _ => ("+", new Color("#9ed3ec"))
+        };
+        var center = PositionOf(building.Position) + new Vector2(33, 9);
+        DrawCircle(center, 8.5f, Ink);
+        Text(icon, center.X - 4, center.Y + 4, 10, color);
+    }
+
+    private void DrawWorkerRoute(Walker worker, Color color)
+    {
+        Vector2 last = PositionOf(worker.Visual) + Vector2.One * Tile / 2;
+        foreach (var tile in worker.RemainingRoute)
+        {
+            Vector2 point = PositionOf(tile) + Vector2.One * Tile / 2;
+            DrawDashedLine(last, point, color, 2, 6);
+            last = point;
+        }
+    }
+
+    private void DrawPlanning()
+    {
+        foreach (var tile in roadPreview)
+        {
+            bool valid = village.Place("road", tile, preview: true) == null;
+            var color = valid ? new Color(0.97f, 0.78f, 0.43f, 0.55f) : new Color(1, 0.38f, 0.28f, 0.7f);
+            Box(PositionOf(tile) + new Vector2(9, 9), new Vector2(24, 24), color);
+        }
+        var hover = TileAt(GetGlobalMousePosition());
+        if (!Village.Inside(hover) || tool == "inspect") return;
+        bool canPlace = village.Place(tool, hover, preview: true) == null;
+        DrawRect(new Rect2(PositionOf(hover) + Vector2.One * 2, Vector2.One * (Tile - 4)),
+            canPlace ? Gold : new Color("#ff8871"), false, 2);
+        if (!canPlace || tool == "road") return;
+        foreach (var adjacent in village.AdjacentTiles(hover))
+        {
+            bool connected = village.ConnectedRoad(adjacent);
+            if (!connected && village.Place("road", adjacent, preview: true) != null) continue;
+            var center = PositionOf(adjacent) + Vector2.One * Tile / 2;
+            DrawCircle(center, 5, connected ? new Color("#b5e7a6") : Gold, connected);
+        }
+    }
+
     private void DrawPanel()
     {
         Box(new Vector2(762, 138), new Vector2(330, 462), Panel);
         Text("DE EERSTE ZAGERIJ", 784, 172, 16, Gold);
-        Text("Leg wegen vanaf de voorraadschuur.", 784, 203, 15, Paper);
-        Text("Plaats een groeve bij de rotsen", 784, 225, 15, Paper);
-        Text("en een houthakker naast het bos.", 784, 247, 15, Paper);
-        Text("Verbind daarna de zagerij.", 784, 269, 15, Paper);
+        Text("Verbind de groeve, houthakker", 784, 202, 14, Paper);
+        Text("en zagerij met het magazijn.", 784, 222, 14, Paper);
+        Text("!  Geen weg     M  Materiaal", 784, 247, 13, Quiet);
+        Text("B  Wacht op bouwer     +  Aan het werk", 784, 267, 13, Quiet);
         DrawLine(new Vector2(784, 289), new Vector2(1069, 289), new Color("#42554a"));
         var building = selected ?? village.Buildings.LastOrDefault(b => b.Kind == "sawmill") ?? village.Warehouse;
         Text(building.Data.Label, 784, 322, 21, Paper);
         bool connected = village.Connected(building);
         var builder = village.Builders.FirstOrDefault(worker => worker.Site == building);
-        string status = !connected ? "Wacht op een weg naar de schuur"
-            : building.Complete ? "Aangesloten op het wegennet"
-            : !building.Supplied ? "Wacht op bouwmateriaal"
-            : builder == null ? "Wacht op een vrije bouwer"
-            : builder.Working ? "Bouwer is aan het werk" : "Bouwer is onderweg";
+        string status = building.Complete
+            ? connected ? "Aangesloten op het wegennet" : "Geen aansluiting"
+            : SiteState(building, builder);
         Text(status, 784, 349, 15, building.Complete && connected ? Quiet : Gold);
         float y = 381;
         foreach (var (good, cost) in building.Data.Cost)
         {
             DrawGood(good, new Vector2(791, y - 5));
-            Text($"{village.Rules.Goods[good].Label} geleverd  {building.Delivered.GetValueOrDefault(good)} / {cost}",
-                808, y, 15, Paper);
+            int inTransit = village.Carriers.Count(carrier => carrier.Loaded &&
+                carrier.Delivery is { } trip && trip.Destination == building && trip.Good == good);
+            Text($"{village.Rules.Goods[good].Label}  {building.Delivered.GetValueOrDefault(good)}/{cost}  •  {inTransit} onderweg",
+                808, y, 13, Paper);
             y += 24;
         }
         if (!building.Complete)
@@ -342,6 +471,9 @@ public partial class Main : Node2D
                 y += 24;
             }
         }
+        int assigned = village.Carriers.Count(carrier => carrier.Delivery?.Destination == building);
+        if (assigned != 0 || builder != null)
+            Text($"Bezorgers  {assigned}    Bouwer  {(builder == null ? 0 : 1)}", 784, 515, 13, Quiet);
         if (village.Won)
         {
             Box(new Vector2(779, 534), new Vector2(296, 47), new Color("#435c3d"));
@@ -359,6 +491,14 @@ public partial class Main : Node2D
         for (int x = 0; x < Village.Width; x++)
             DrawGround(new Vector2I(x, y));
         foreach (var building in village.Buildings) DrawBuilding(building);
+        if (currentMenu == Menu.None && selected != null)
+        {
+            foreach (var carrier in village.Carriers)
+                if (carrier.Delivery?.Destination == selected) DrawWorkerRoute(carrier, Gold);
+            foreach (var builder in village.Builders)
+                if (builder.Site == selected) DrawWorkerRoute(builder, new Color("#8fcde9"));
+        }
+        foreach (var building in village.Buildings) DrawSiteStatus(building);
         for (int i = 0; i < village.Carriers.Length; i++)
         {
             var carrier = village.Carriers[i];
@@ -380,18 +520,17 @@ public partial class Main : Node2D
             Shape(new Color("#8fcde9"), center + new Vector2(0, -6), center + new Vector2(6, 0),
                 center + new Vector2(0, 6), center + new Vector2(-6, 0));
         }
-        var hover = TileAt(GetGlobalMousePosition());
-        if (Village.Inside(hover) && tool != "inspect")
-        {
-            bool valid = village.Place(tool, hover, preview: true) == null;
-            DrawRect(new Rect2(PositionOf(hover) + Vector2.One * 2, Vector2.One * (Tile - 4)),
-                valid ? Gold : new Color("#ff8871"), false, 2);
-        }
+        if (currentMenu == Menu.None) DrawPlanning();
         DrawPanel();
-        Text(feedback, 28, 636, 17, Paper);
-        string costs = tool == "inspect" ? "Blauwe ruit: bouwer   •   Ronde figuren: bezorgers"
-            : string.Join("   •   ", village.Rules.Buildings[tool].Cost.Select(
-                cost => $"{cost.Value} × {village.Rules.Goods[cost.Key].Label}"));
+        Text(feedback, 28, 636, 16, Paper);
+        string costs = "Blauwe ruit: bouwer   •   Ronde figuren: bezorgers";
+        if (tool != "inspect")
+        {
+            int count = tool == "road" && roadPreview.Count != 0
+                ? roadPreview.Count(tile => !village.Walkable(tile) && village.At(tile)?.Kind != "road") : 1;
+            costs = string.Join("   •   ", village.Rules.Buildings[tool].Cost.Select(cost =>
+                $"{cost.Value * count} × {village.Rules.Goods[cost.Key].Label} (magazijn: {village.Warehouse.Stock.GetValueOrDefault(cost.Key)})"));
+        }
         Text(costs, 28, 658, 14, Gold);
         Text("1–5  Bouwgereedschap     Spatie  Pauzeren     Rechtermuisknop  Inspecteren", 28, 682, 14, Quiet);
     }

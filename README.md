@@ -14,7 +14,13 @@ Pak de desktopdownload uit en open het uitvoerbare bestand. Laat de bestanden ui
 4. Plaats de **Zagerij** en sluit ook haar bouwterrein aan. Selecteer het gebouw om de leveringen te volgen.
 5. Wacht tot beide dragers de bouwkosten hebben geleverd. De werkende zagerij vraagt vervolgens een extra boomstam en maakt daarmee de eerste plank.
 
-Gebruik **Pauze**, **3×** of **Herstart** om de proef te bekijken en te herhalen.
+Sleep met het weggereedschap om eerst het tracé en de kosten te bekijken. Laat los om de bouwopdracht te plaatsen. Selecteer een bouwplaats om de geleverde en onderweg zijnde goederen, bouwstatus en routes van de ploeg te zien.
+
+Gebruik **Pauze** en **3×** om de simulatiesnelheid aan te passen. Open met **Escape** het pauzemenu voor instellingen, herstarten of teruggaan naar het hoofdmenu.
+
+## Instellingen
+
+Het menu bevat venstermodus, fullscreen op het huidige scherm, vensterresolutie, VSync, FPS-limiet, GUI-schaal, hoofdvolume en effectvolume. De bediening staat onder **Instellingen → Bediening**. Schermmodus en vensterresolutie worden pas opgeslagen na **Behouden**. Zonder bevestiging herstelt de vorige weergave na vijftien seconden. De overige wijzigingen worden opgeslagen via **Toepassen**.
 
 ## Ontwikkelen
 
