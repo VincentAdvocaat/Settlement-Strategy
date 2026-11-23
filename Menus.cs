@@ -4,7 +4,7 @@ using Godot;
 
 public partial class Main
 {
-    private enum Menu { None, Title, Pause, Options, Controls, DisplayConfirm, Leave }
+    private enum Menu { None, Title, Pause, Options, Controls, Research, DisplayConfirm, Leave }
     private Menu currentMenu;
     private Menu optionsParent;
     private Control? overlay;
@@ -113,6 +113,7 @@ public partial class Main
             case Menu.Pause: ShowMenu(Menu.None); break;
             case Menu.Options: ShowMenu(optionsParent); break;
             case Menu.Controls: ShowMenu(Menu.Options); break;
+            case Menu.Research: ShowMenu(Menu.None); break;
             case Menu.DisplayConfirm: RevertDisplay(); break;
             case Menu.Leave: ShowMenu(Menu.Pause); break;
         }
@@ -129,6 +130,36 @@ public partial class Main
     private bool playing;
     private Action? leaveAction;
     private string leaveTitle = "";
+
+    private void Begin(bool campaign)
+    {
+        StartSession(campaign);
+        playing = true;
+        ShowMenu(Menu.None);
+        if (!string.IsNullOrEmpty(loadWarning)) GD.PushWarning(loadWarning);
+    }
+
+    private void SaveCurrent()
+    {
+        string message = SessionSave.Write(village) == Error.Ok ? "Spel opgeslagen." : "Opslaan mislukt.";
+        ShowMenu(Menu.Pause);
+        MenuLabel(message, 14, Gold);
+    }
+
+    private void ContinueSave()
+    {
+        try
+        {
+            LoadSession(SessionSave.Read(ReadSessionRules()));
+            playing = true;
+            ShowMenu(Menu.None);
+        }
+        catch (InvalidOperationException error)
+        {
+            ShowMenu(Menu.Title);
+            MenuLabel(error.Message, 13, Gold);
+        }
+    }
 
     private void ConfirmLeave(string title, Action action)
     {
@@ -184,7 +215,12 @@ public partial class Main
         {
             case Menu.Title:
                 MenuLabel("Settlement Strategy", 32, Gold);
-                MenuButton("Spelen", () => { Reset(); playing = true; ShowMenu(Menu.None); });
+                MenuLabel("Bouw een dorp en bevoorraad de riviergrens.", 16, Paper);
+                MenuButton("Campagne • De riviergrens", () => Begin(true));
+                MenuButton("Vrij bouwen", () => Begin(false));
+                if (FileAccess.FileExists(SessionSave.Path)) MenuButton("Verder met opgeslagen spel", ContinueSave);
+                if (!string.IsNullOrEmpty(loadWarning))
+                    MenuLabel("Mod kon niet laden. Details staan in het logboek.", 13, Gold);
                 MenuButton("Instellingen", OpenOptions);
                 MenuButton("Afsluiten", () => GetTree().Quit());
                 break;
@@ -192,6 +228,7 @@ public partial class Main
                 MenuLabel("Gepauzeerd", 28, Gold);
                 MenuButton("Hervatten", () => ShowMenu(Menu.None));
                 MenuButton("Instellingen", OpenOptions);
+                MenuButton("Spel opslaan", SaveCurrent);
                 MenuButton("Opnieuw beginnen", () => ConfirmLeave("Opnieuw beginnen?", () => { Reset(); ShowMenu(Menu.None); }));
                 MenuButton("Hoofdmenu", () => ConfirmLeave("Terug naar het hoofdmenu?", () => { playing = false; ShowMenu(Menu.Title); }));
                 MenuButton("Afsluiten", () => ConfirmLeave("Spel afsluiten?", () => GetTree().Quit()));
@@ -202,10 +239,19 @@ public partial class Main
                 MenuLabel("Linkermuisknop    Selecteren of plaatsen", 16, Paper);
                 MenuLabel("Slepen met Weg    Meerdere wegtegels plannen", 16, Paper);
                 MenuLabel("Rechtermuisknop    Terug naar inspecteren", 16, Paper);
-                MenuLabel("1–5    Bouwgereedschap", 16, Paper);
+                MenuLabel("0–9    Bouwgereedschap", 16, Paper);
+                MenuLabel("T    Troep naar geselecteerde buitenpost sturen", 16, Paper);
                 MenuLabel("Spatie    Simulatie pauzeren", 16, Paper);
                 MenuLabel("Escape    Pauzemenu of terug", 16, Paper);
                 MenuButton("Terug", () => ShowMenu(Menu.Options));
+                break;
+            case Menu.Research:
+                MenuLabel("Onderzoek", 28, Gold);
+                MenuLabel($"Kennis beschikbaar: {village.Knowledge}", 16, Paper);
+                MenuLabel("Een werkplaats zet geleverde planken om in kennis.", 15, Paper);
+                AddResearchButton("carts", "Karren • twee goederen per rit");
+                AddResearchButton("rotation", "Gewasrotatie • meer graan per oogst");
+                MenuButton("Terug", () => ShowMenu(Menu.None));
                 break;
             case Menu.DisplayConfirm:
                 MenuLabel("Weergave behouden?", 26, Gold);
@@ -221,6 +267,19 @@ public partial class Main
                 break;
         }
         menuContent.FindNextValidFocus()?.CallDeferred(Control.MethodName.GrabFocus);
+    }
+
+    private void AddResearchButton(string technology, string description)
+    {
+        int cost = village.Rules.ResearchCosts[technology];
+        bool done = village.Technologies.Contains(technology);
+        var button = MenuButton(done ? description + " ✓" : $"{description} ({cost} kennis)", () =>
+        {
+            var error = village.Research(technology);
+            ShowMenu(Menu.Research);
+            if (error != null) MenuLabel(error, 14, Gold);
+        });
+        button.Disabled = done || village.Knowledge < cost;
     }
 
     private Label MenuLabel(string text, int size, Color color)
@@ -333,7 +392,7 @@ public partial class Main
         foreach (var control in HudControls)
         {
             float height = GuiFont(36);
-            control.Position = new Vector2(control.Position.X, 102 - height / 2);
+            control.Position = new Vector2(control.Position.X, (control.Position.Y < 300 ? 102 : 626) - height / 2);
             control.Size = new Vector2(control.Size.X, height);
             control.AddThemeFontSizeOverride("font_size", GuiFont(14));
         }

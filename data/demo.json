@@ -1,28 +1,175 @@
 {
-  "StartingStock": { "base:stone": 24, "base:log": 10 },
-  "Goods": {
-    "base:stone": { "Label": "Steen", "Priority": 20 },
-    "base:log": { "Label": "Boomstam", "Priority": 10 },
-    "base:plank": { "Label": "Plank", "Priority": 0 }
+  "StartingStock": {
+    "base:stone": 24,
+    "base:log": 10
   },
-  "TaskPriority": { "construction": 20, "production": 10 },
+  "Goods": {
+    "base:stone": {
+      "Label": "Steen",
+      "Priority": 20
+    },
+    "base:log": {
+      "Label": "Boomstam",
+      "Priority": 10
+    },
+    "base:plank": {
+      "Label": "Plank",
+      "Priority": 0
+    },
+    "base:grain": {
+      "Label": "Graan",
+      "Priority": 14
+    },
+    "base:flour": {
+      "Label": "Meel",
+      "Priority": 15
+    },
+    "base:bread": {
+      "Label": "Brood",
+      "Priority": 30
+    },
+    "base:knowledge": {
+      "Label": "Kennis",
+      "Priority": 0
+    }
+  },
+  "TaskPriority": {
+    "construction": 20,
+    "production": 10,
+    "village": 14,
+    "outpost": 18
+  },
   "Buildings": {
-    "stockyard": { "Label": "Voorraadschuur" },
-    "road": { "Label": "Weg", "BuildSeconds": 0.8, "Cost": { "base:stone": 1 } },
+    "stockyard": {
+      "Label": "Voorraadschuur"
+    },
+    "road": {
+      "Label": "Weg",
+      "BuildSeconds": 0.8,
+      "Cost": {
+        "base:stone": 1
+      }
+    },
     "quarry": {
-      "Label": "Steengroeve", "Near": "Rock", "Output": "base:stone",
-      "BuildSeconds": 4, "Cost": { "base:log": 3, "base:stone": 2 },
-      "Seconds": 2, "Capacity": 8
+      "Label": "Steengroeve",
+      "Near": "Rock",
+      "Output": "base:stone",
+      "BuildSeconds": 4,
+      "Cost": {
+        "base:log": 3,
+        "base:stone": 2
+      },
+      "Seconds": 2,
+      "Capacity": 8
     },
     "woodcamp": {
-      "Label": "Houthakkerskamp", "Near": "Forest", "Output": "base:log",
-      "BuildSeconds": 3, "Cost": { "base:log": 2, "base:stone": 1 },
-      "Seconds": 2, "Capacity": 10
+      "Label": "Houthakkerskamp",
+      "Near": "Forest",
+      "Output": "base:log",
+      "BuildSeconds": 3,
+      "Cost": {
+        "base:log": 2,
+        "base:stone": 1
+      },
+      "Seconds": 2,
+      "Capacity": 10
     },
     "sawmill": {
-      "Label": "Zagerij", "Input": "base:log", "Output": "base:plank",
-      "BuildSeconds": 5, "Seconds": 2, "Capacity": 6,
-      "Cost": { "base:stone": 4, "base:log": 6 }
+      "Label": "Zagerij",
+      "Input": "base:log",
+      "Output": "base:plank",
+      "BuildSeconds": 5,
+      "Seconds": 2,
+      "Capacity": 6,
+      "Cost": {
+        "base:stone": 4,
+        "base:log": 6
+      }
+    },
+    "farm": {
+      "Label": "Graanakker",
+      "BuildSeconds": 3,
+      "Cost": {
+        "base:log": 2
+      },
+      "Seconds": 3,
+      "Capacity": 8,
+      "Output": "base:grain",
+      "Yield": 2
+    },
+    "mill": {
+      "Label": "Molen",
+      "BuildSeconds": 3,
+      "Cost": {
+        "base:log": 2,
+        "base:stone": 3
+      },
+      "Seconds": 2,
+      "Capacity": 6,
+      "Output": "base:flour",
+      "Input": "base:grain"
+    },
+    "bakery": {
+      "Label": "Bakkerij",
+      "BuildSeconds": 3,
+      "Cost": {
+        "base:stone": 3,
+        "base:plank": 2
+      },
+      "Seconds": 2,
+      "Capacity": 6,
+      "Output": "base:bread",
+      "Input": "base:flour",
+      "Yield": 2
+    },
+    "house": {
+      "Label": "Woonhuis",
+      "BuildSeconds": 3,
+      "Cost": {
+        "base:plank": 3
+      },
+      "Housing": 3
+    },
+    "outpost": {
+      "Label": "Buitenpost",
+      "BuildSeconds": 3,
+      "Cost": {
+        "base:plank": 4,
+        "base:stone": 4
+      },
+      "Input": "base:bread",
+      "Capacity": 4
+    },
+    "paved": {
+      "Label": "Verharde weg",
+      "BuildSeconds": 1.4,
+      "Cost": {
+        "base:stone": 2
+      }
+    },
+    "research": {
+      "Label": "Werkplaats",
+      "BuildSeconds": 4,
+      "Cost": {
+        "base:stone": 4,
+        "base:plank": 3
+      },
+      "Input": "base:plank",
+      "Output": "base:knowledge",
+      "Capacity": 6,
+      "Seconds": 5
+    },
+    "expand": {
+      "Label": "Opslaguitbreiding",
+      "BuildSeconds": 4,
+      "Cost": {
+        "base:stone": 2,
+        "base:plank": 2
+      }
     }
+  },
+  "ResearchCosts": {
+    "carts": 3,
+    "rotation": 3
   }
 }

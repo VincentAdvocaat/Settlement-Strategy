@@ -24,6 +24,9 @@ public partial class Main : Node2D
     private readonly List<Button> HudControls = new();
     private int completedSites;
     private Button pause = null!;
+    private Button deployButton = null!;
+    private OptionButton modTools = null!;
+    private string loadWarning = "";
     private Button fast = null!;
     private readonly Dictionary<string, Button> toolButtons = new();
 
@@ -37,6 +40,24 @@ public partial class Main : Node2D
             string id = tools[i];
             toolButtons[id] = AddButton($"{i + 1}  {labels[i]}", 28 + i * 145, 84, 137, () => Choose(id));
         }
+        string[] economy = { "farm", "mill", "bakery", "house", "outpost" };
+        for (int i = 0; i < economy.Length; i++)
+        {
+            string id = economy[i];
+            toolButtons[id] = AddButton($"{(i + 6) % 10}  {village.Rules.Buildings[id].Label}",
+                28 + i * 130, 608, 123, () => Choose(id));
+        }
+        deployButton = AddButton("Troep sturen", 678, 608, 119, DeploySelected);
+        modTools = new OptionButton { Position = new Vector2(808, 608), Size = new Vector2(153, 36) };
+        AddButton("Onderzoek", 969, 608, 123, () => ShowMenu(Menu.Research));
+        modTools.ItemSelected += index =>
+        {
+            Choose((string)modTools.GetItemMetadata((int)index));
+            ResetBuildCatalogLabel();
+        };
+        AddChild(modTools);
+        HudControls.Add(modTools);
+        RefreshModTools();
         pause = AddButton("Pauze", 803, 84, 86, TogglePause);
         fast = AddButton("1×", 897, 84, 65, ToggleFast);
         AddButton("Menu  Esc", 970, 84, 122, () => ShowMenu(Menu.Pause));
@@ -63,15 +84,62 @@ public partial class Main : Node2D
         return button;
     }
 
-    private void Reset()
+    private void Reset() => StartSession(village?.Campaign ?? true);
+
+    private void StartSession(bool campaign)
     {
-        village = new Village(Rules.Load("res://data/demo.json"));
+        var rules = ReadSessionRules();
+        LoadSession(new Village(rules, campaign));
+    }
+
+    private Rules ReadSessionRules()
+    {
+        const string path = "res://data/demo.json";
+        loadWarning = "";
+        try { return Rules.Load(path); }
+        catch (InvalidOperationException error)
+        {
+            loadWarning = error.Message;
+            return Rules.Load(path, includeMods: false);
+        }
+    }
+
+    private void LoadSession(Village session)
+    {
+        village = session;
         selected = null;
-        completedSites = 1;
+        completedSites = village.Buildings.Count(building => building.Complete);
         accumulator = 0;
         speed = 1;
         Choose("inspect");
+        RefreshModTools();
         UpdateSpeed();
+    }
+
+    private void RefreshModTools()
+    {
+        if (modTools == null) return;
+        modTools.Clear();
+        foreach (var (id, building) in village.Rules.Buildings.Where(pair =>
+            pair.Key is "research" or "expand" or "paved" || pair.Key.Contains(':')))
+        {
+            modTools.AddItem(building.Label);
+            modTools.SetItemMetadata(modTools.ItemCount - 1, id);
+        }
+        modTools.Disabled = modTools.ItemCount == 0;
+        ResetBuildCatalogLabel();
+    }
+
+    private void ResetBuildCatalogLabel()
+    {
+        modTools.Select(-1);
+        modTools.Text = "Meer bouwen";
+    }
+
+    private void DeploySelected()
+    {
+        if (selected == null) return;
+        feedback = village.Deploy(selected) ?? "De troep vertrekt naar de buitenpost.";
     }
 
     private void UpdateSpeed()
@@ -101,6 +169,8 @@ public partial class Main : Node2D
         feedback = id switch
         {
             "road" => "Klik of sleep over vrije tegels. Verbind de werkplaatsen met de weg bij de schuur.",
+            "expand" => "Kies een voltooid gebouw met opslag voor vier extra voorraadplaatsen.",
+            "paved" => "Kies een afgewerkte weg om die te verharden. Bezorgers lopen daar sneller.",
             "quarry" => "Klik op een vrije tegel naast een rotsvak.",
             "woodcamp" => "Klik op een vrije tegel naast het bos.",
             "sawmill" => "Plaats een bouwterrein op een vrije grastegel en verbind het met de weg.",
@@ -119,12 +189,14 @@ public partial class Main : Node2D
             return;
         }
         accumulator += (float)Math.Min(delta, 0.1) * speed;
-        const float tick = 1f / 30;
+        const float tick = Village.Step;
         while (accumulator >= tick)
         {
             village.Tick(tick);
             accumulator -= tick;
         }
+        if (selected is { Complete: true, UpgradeTarget: { } expanded }) selected = expanded;
+        deployButton.Disabled = selected is not { Kind: "outpost", Complete: true } || village.Troop != null;
         int nowComplete = village.Buildings.Count(building => building.Complete);
         if (nowComplete > completedSites) PlayCue(completeSound);
         completedSites = nowComplete;
@@ -213,6 +285,12 @@ public partial class Main : Node2D
                 case Key.Key3: Choose("quarry"); break;
                 case Key.Key4: Choose("woodcamp"); break;
                 case Key.Key5: Choose("sawmill"); break;
+                case Key.Key6: Choose("farm"); break;
+                case Key.Key7: Choose("mill"); break;
+                case Key.Key8: Choose("bakery"); break;
+                case Key.Key9: Choose("house"); break;
+                case Key.Key0: Choose("outpost"); break;
+                case Key.T: DeploySelected(); break;
                 case Key.Space: TogglePause(); break;
             }
         }
@@ -300,7 +378,7 @@ public partial class Main : Node2D
         if (village.Roads.Contains(tile))
         {
             var center = pos + Vector2.One * Tile / 2;
-            var sand = new Color("#c7a97b");
+            var sand = new Color(village.PavedRoads.Contains(tile) ? "#9ba9a6" : "#c7a97b");
             Box(center - Vector2.One * 8, Vector2.One * 16, sand);
             foreach (var direction in new[] { Vector2I.Right, Vector2I.Down, Vector2I.Left, Vector2I.Up })
             {
@@ -323,8 +401,22 @@ public partial class Main : Node2D
                 DrawLine(center + new Vector2(-5, 3), center + new Vector2(5, -3), new Color("#a56c44"), 7);
                 DrawCircle(center + new Vector2(-5, 3), 3.4f, new Color("#e4b77f"));
                 break;
+            case "base:grain":
+                DrawLine(center + new Vector2(-4, 6), center + new Vector2(4, -6), Gold, 3);
+                DrawCircle(center + new Vector2(0, -2), 3, Gold);
+                break;
+            case "base:flour":
+                Box(center - new Vector2(5, 5), new Vector2(10, 11), Paper);
+                break;
+            case "base:bread":
+                DrawCircle(center, 6, new Color("#d78a45"));
+                DrawLine(center + new Vector2(-2, 2), center + new Vector2(2, -3), Paper, 1.5f);
+                break;
             case "base:plank":
                 Box(center - new Vector2(7, 4), new Vector2(14, 7), new Color("#e2bb76"));
+                break;
+            default:
+                DrawCircle(center, 4, new Color("#c9a9e7"));
                 break;
         }
     }
@@ -332,7 +424,13 @@ public partial class Main : Node2D
     private void DrawBuilding(Building building)
     {
         var pos = PositionOf(building.Position);
-        if (building.Kind == "road")
+        if (building.Kind == "expand")
+        {
+            if (!building.Complete)
+                DrawRect(new Rect2(pos + Vector2.One * 3, Vector2.One * 36), Gold, false, 2);
+            return;
+        }
+        if (building.Kind is "road" or "paved")
         {
             if (!building.Complete)
             {
@@ -355,12 +453,31 @@ public partial class Main : Node2D
             Color roof = new(building.Kind switch
             {
                 "stockyard" => "#9b5846", "quarry" => "#87938e",
-                "woodcamp" => "#a17a4d", _ => "#44828b"
+                "woodcamp" => "#a17a4d", "farm" => "#d5ad4d", "mill" => "#ddd0ac",
+                "bakery" => "#ab6548", "house" => "#956386", "outpost" => "#7485ae", _ => "#44828b"
             });
             Box(pos + new Vector2(8, 17), new Vector2(26, 19), new Color("#cda475"));
             Shape(roof, pos + new Vector2(5, 19), pos + new Vector2(21, 6), pos + new Vector2(37, 19),
                 pos + new Vector2(33, 23), pos + new Vector2(8, 23));
             Box(pos + new Vector2(17, 26), new Vector2(8, 10), Ink);
+            if (building.Kind == "farm")
+            {
+                Box(pos + new Vector2(5, 7), new Vector2(32, 29), new Color("#76583b"));
+                Color crop = building.Progress >= building.Data.Seconds * 0.55f ? Gold : new Color("#a9ba64");
+                for (int i = 0; i < 4; i++)
+                    DrawLine(pos + new Vector2(9, 11 + i * 6), pos + new Vector2(32, 11 + i * 6), crop, 2);
+            }
+            if (building.Kind == "mill")
+            {
+                var center = pos + new Vector2(21, 16);
+                DrawLine(center + new Vector2(-12, -10), center + new Vector2(12, 10), Paper, 3);
+                DrawLine(center + new Vector2(10, -12), center + new Vector2(-10, 12), Paper, 3);
+            }
+            if (building.Kind == "outpost")
+            {
+                DrawLine(pos + new Vector2(31, 31), pos + new Vector2(31, 4), Paper, 2);
+                Shape(new Color("#8ebde2"), pos + new Vector2(31, 5), pos + new Vector2(41, 9), pos + new Vector2(31, 14));
+            }
             if (building.Data.Output is string good) DrawGood(good, pos + new Vector2(32, 31));
         }
         if (selected == building)
@@ -415,7 +532,7 @@ public partial class Main : Node2D
         bool canPlace = village.Place(tool, hover, preview: true) == null;
         DrawRect(new Rect2(PositionOf(hover) + Vector2.One * 2, Vector2.One * (Tile - 4)),
             canPlace ? Gold : new Color("#ff8871"), false, 2);
-        if (!canPlace || tool == "road") return;
+        if (!canPlace || tool is "road" or "paved" or "expand") return;
         foreach (var adjacent in village.AdjacentTiles(hover))
         {
             bool connected = village.ConnectedRoad(adjacent);
@@ -428,26 +545,41 @@ public partial class Main : Node2D
     private void DrawPanel()
     {
         Box(new Vector2(762, 138), new Vector2(330, 462), Panel);
-        Text("DE EERSTE ZAGERIJ", 784, 172, 16, Gold);
-        Text("Verbind de groeve, houthakker", 784, 202, 14, Paper);
-        Text("en zagerij met het magazijn.", 784, 222, 14, Paper);
-        Text("!  Geen weg     M  Materiaal", 784, 247, 13, Quiet);
-        Text("B  Wacht op bouwer     +  Aan het werk", 784, 267, 13, Quiet);
+        Text(village.Campaign ? "DE RIVIERGRENS" : "VRIJ BOUWEN", 784, 168, 16, Gold);
+        Text($"Eerste plank   {(village.FirstPlank ? "✓" : "○")}", 784, 194, 14, Paper);
+        Text($"Inwoners   {village.Population}/{village.Housing}   {(village.VillageHungry ? "• Broodtekort" : village.Campaign ? "• Doel: 4" : "")}", 784, 218, 14, Paper);
+        int meals = village.Campaign ? Math.Min(3, village.BestSupplyStreak) : village.FedAtOutpost;
+        Text(village.Campaign ? $"Buitenpost   {meals}/3 maaltijden op rij" : $"Buitenpost   {meals} maaltijden op rij",
+            784, 241, 13, Paper);
+        string statusLine = village.TroopStationed
+            ? (village.TroopHungry ? "Tekort   •   " : "") + $"Volgende maaltijd over {Math.Ceiling(village.NextTroopMeal)} s"
+            : village.Troop != null ? "Troep onderweg"
+            : !village.FirstPlank ? "Verbind hout, steen en de zagerij."
+            : village.Population < 4 ? "Bouw woonruimte en lever brood."
+            : "Selecteer een buitenpost en stuur de troep.";
+        Text(statusLine, 784, 265, 12, Quiet);
         DrawLine(new Vector2(784, 289), new Vector2(1069, 289), new Color("#42554a"));
         var building = selected ?? village.Buildings.LastOrDefault(b => b.Kind == "sawmill") ?? village.Warehouse;
         Text(building.Data.Label, 784, 322, 21, Paper);
         bool connected = village.Connected(building);
         var builder = village.Builders.FirstOrDefault(worker => worker.Site == building);
-        string status = building.Complete
-            ? connected ? "Aangesloten op het wegennet" : "Geen aansluiting"
-            : SiteState(building, builder);
-        Text(status, 784, 349, 15, building.Complete && connected ? Quiet : Gold);
+        string status;
+        if (!building.Complete) status = SiteState(building, builder);
+        else if (!connected) status = "Geen aansluiting";
+        else if (building.Data.Output is string output && building.Stock.GetValueOrDefault(output) >= building.Capacity)
+            status = "Uitvoeropslag is vol";
+        else if (building.Data.Output != null && building.Data.Input is string input && building.Stock.GetValueOrDefault(input) == 0)
+            status = $"Wacht op {village.Rules.Goods[input].Label.ToLowerInvariant()}";
+        else if (building.Data.Output != null) status = "Produceert";
+        else status = "Aangesloten op het wegennet";
+        Text(status, 784, 349, 15, status.StartsWith("Wacht", StringComparison.Ordinal) || !connected ? Gold : Quiet);
         float y = 381;
-        foreach (var (good, cost) in building.Data.Cost)
+        foreach (var (good, cost) in building.Data.Cost.Where(_ => !building.Complete))
         {
             DrawGood(good, new Vector2(791, y - 5));
-            int inTransit = village.Carriers.Count(carrier => carrier.Loaded &&
-                carrier.Delivery is { } trip && trip.Destination == building && trip.Good == good);
+            int inTransit = village.Carriers.Where(carrier => carrier.Loaded &&
+                carrier.Delivery is { } trip && trip.Destination == building && trip.Good == good)
+                .Sum(carrier => carrier.Delivery!.Quantity);
             Text($"{village.Rules.Goods[good].Label}  {building.Delivered.GetValueOrDefault(good)}/{cost}  •  {inTransit} onderweg",
                 808, y, 13, Paper);
             y += 24;
@@ -466,18 +598,26 @@ public partial class Main : Node2D
             foreach (var good in goods)
             {
                 DrawGood(good, new Vector2(791, y - 5));
-                Text($"{village.Rules.Goods[good].Label} op voorraad  {building.Stock.GetValueOrDefault(good)}",
+                string amount = building.Data.Capacity > 0
+                    ? $"{building.Stock.GetValueOrDefault(good)}/{building.Capacity}"
+                    : building.Stock.GetValueOrDefault(good).ToString();
+                Text($"{village.Rules.Goods[good].Label} op voorraad  {amount}",
                     808, y, 15, Paper);
                 y += 24;
             }
         }
+        if (building.Complete && building.Data.Output != null && building.Data.Seconds > 0)
+        {
+            Box(new Vector2(784, y), new Vector2(284, 5), Ink);
+            Box(new Vector2(784, y), new Vector2(284 * building.Progress / building.Data.Seconds, 5), Gold);
+        }
         int assigned = village.Carriers.Count(carrier => carrier.Delivery?.Destination == building);
         if (assigned != 0 || builder != null)
             Text($"Bezorgers  {assigned}    Bouwer  {(builder == null ? 0 : 1)}", 784, 515, 13, Quiet);
-        if (village.Won)
+        if (village.Won && village.Campaign)
         {
             Box(new Vector2(779, 534), new Vector2(296, 47), new Color("#435c3d"));
-            Text("Gelukt! De eerste plank is gemaakt.", 793, 563, 15, Paper);
+            Text("De riviergrens is bevoorraad!", 793, 563, 15, Paper);
         }
     }
 
@@ -486,7 +626,7 @@ public partial class Main : Node2D
         if (village == null) return;
         Text("Settlement Strategy", 28, 52, 34, Paper);
         Text($"Magazijn   Steen {village.Warehouse.Stock.GetValueOrDefault("base:stone")}   •   Boomstammen {village.Warehouse.Stock.GetValueOrDefault("base:log")}", 540, 34, 16, Paper);
-        Text($"Vrije bouwers {village.Builders.Count(builder => builder.Site == null)}/{village.Builders.Length}   •   Vrije bezorgers {village.Carriers.Count(carrier => carrier.Delivery == null)}/{village.Carriers.Length}", 540, 56, 14, Quiet);
+        Text($"Vrije bouwers {village.Builders.Count(builder => builder.Site == null)}/{village.Builders.Length}   •   Vrije bezorgers {village.Carriers.Count(carrier => carrier.Delivery == null)}/{village.Carriers.Count}", 540, 56, 14, Quiet);
         for (int y = 0; y < Village.Height; y++)
         for (int x = 0; x < Village.Width; x++)
             DrawGround(new Vector2I(x, y));
@@ -499,15 +639,16 @@ public partial class Main : Node2D
                 if (builder.Site == selected) DrawWorkerRoute(builder, new Color("#8fcde9"));
         }
         foreach (var building in village.Buildings) DrawSiteStatus(building);
-        for (int i = 0; i < village.Carriers.Length; i++)
+        for (int i = 0; i < village.Carriers.Count; i++)
         {
             var carrier = village.Carriers[i];
-            var center = PositionOf(carrier.Visual) + new Vector2(16 + i * 10, 25 + i * 3);
+            var center = PositionOf(carrier.Visual) + new Vector2(10 + (i % 4) * 7, 24 + (i % 3) * 3);
             DrawCircle(center + new Vector2(0, 3), 7, Ink);
             DrawCircle(center, 5.5f, new Color(i == 0 ? "#f3d7a6" : "#cae0c0"));
             if (carrier.Loaded && carrier.Delivery is { } trip)
             {
                 DrawCircle(center - new Vector2(0, 13), 9, Ink);
+                if (trip.Quantity > 1) Text(trip.Quantity.ToString(), center.X + 7, center.Y - 9, 9, Paper);
                 DrawGood(trip.Good, center - new Vector2(0, 13));
             }
         }
@@ -520,9 +661,19 @@ public partial class Main : Node2D
             Shape(new Color("#8fcde9"), center + new Vector2(0, -6), center + new Vector2(6, 0),
                 center + new Vector2(0, 6), center + new Vector2(-6, 0));
         }
+        if (village.Troop is { } troop)
+        {
+            if (selected == village.Garrison) DrawWorkerRoute(troop, new Color("#c1d3fe"));
+            var center = PositionOf(troop.Visual) + new Vector2(21, 21);
+            DrawCircle(center, 10, Ink);
+            DrawCircle(center + new Vector2(-5, 4), 4, new Color("#869fc7"));
+            DrawCircle(center + new Vector2(5, 4), 4, new Color("#869fc7"));
+            DrawCircle(center - new Vector2(0, 4), 5, new Color("#afc9f2"));
+            DrawLine(center + new Vector2(-3, 0), center + new Vector2(3, 0), Ink, 2);
+        }
         if (currentMenu == Menu.None) DrawPlanning();
         DrawPanel();
-        Text(feedback, 28, 636, 16, Paper);
+        Text(feedback, 28, 665, 14, Paper);
         string costs = "Blauwe ruit: bouwer   •   Ronde figuren: bezorgers";
         if (tool != "inspect")
         {
@@ -531,7 +682,7 @@ public partial class Main : Node2D
             costs = string.Join("   •   ", village.Rules.Buildings[tool].Cost.Select(cost =>
                 $"{cost.Value * count} × {village.Rules.Goods[cost.Key].Label} (magazijn: {village.Warehouse.Stock.GetValueOrDefault(cost.Key)})"));
         }
-        Text(costs, 28, 658, 14, Gold);
-        Text("1–5  Bouwgereedschap     Spatie  Pauzeren     Rechtermuisknop  Inspecteren", 28, 682, 14, Quiet);
+        Text(costs, 28, 686, 13, Gold);
+
     }
 }
