@@ -1,0 +1,19 @@
+config_version=5
+
+[application]
+config/name="Settlement Strategy"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.5", "C#", "GL Compatibility")
+
+[display]
+window/size/viewport_width=1120
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+
+[dotnet]
+project/assembly_name="SettlementStrategy"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+environment/defaults/default_clear_color=Color(0.085, 0.11, 0.10, 1)

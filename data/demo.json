@@ -1,0 +1,23 @@
+{
+  "Goods": {
+    "base:stone": { "Label": "Steen", "Priority": 20 },
+    "base:log": { "Label": "Boomstam", "Priority": 10 },
+    "base:plank": { "Label": "Plank", "Priority": 0 }
+  },
+  "TaskPriority": { "construction": 20, "production": 10 },
+  "Buildings": {
+    "stockyard": { "Label": "Voorraadschuur" },
+    "quarry": {
+      "Label": "Steengroeve", "Near": "Rock", "Output": "base:stone",
+      "Seconds": 2, "Capacity": 8
+    },
+    "woodcamp": {
+      "Label": "Houthakkerskamp", "Near": "Forest", "Output": "base:log",
+      "Seconds": 2, "Capacity": 10
+    },
+    "sawmill": {
+      "Label": "Zagerij", "Input": "base:log", "Output": "base:plank",
+      "Seconds": 2, "Capacity": 6, "Cost": { "base:stone": 4, "base:log": 6 }
+    }
+  }
+}
