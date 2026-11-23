@@ -4,6 +4,8 @@ Een korte speelbare bouwdemo. Leg wegen, win steen en boomstammen en lever beide
 
 ## Spelen
 
+Het magazijn start met 24 steen en 10 boomstammen. Een wegtegel kost 1 steen, een steengroeve 2 steen en 3 boomstammen, en een houthakkerskamp 1 steen en 2 boomstammen. Twee bezorgers vervoeren het materiaal over afgewerkte wegen. Eén bouwer loopt naar een bereikbaar bouwterrein zodra het materiaal er is. Een uitgestippelde weg wordt tegel voor tegel bereikbaar naarmate de bouw vordert.
+
 Pak de desktopdownload uit en open het uitvoerbare bestand. Laat de bestanden uit het archief bij elkaar staan. Op Linux kan het nodig zijn het uitvoerbare bestand eerst uitvoerrechten te geven.
 
 1. Kies **Houthakker** en plaats het kamp op gras naast het bos.

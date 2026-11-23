@@ -19,12 +19,14 @@ internal sealed class BuildingData
     public string? Input { get; set; }
     public string? Output { get; set; }
     public float Seconds { get; set; }
+    public float BuildSeconds { get; set; }
     public int Capacity { get; set; }
     public Dictionary<string, int> Cost { get; set; } = new();
 }
 
 internal sealed class Rules
 {
+    public Dictionary<string, int> StartingStock { get; set; } = new();
     public Dictionary<string, Goods> Goods { get; set; } = new();
     public Dictionary<string, int> TaskPriority { get; set; } = new();
     public Dictionary<string, BuildingData> Buildings { get; set; } = new();
@@ -33,6 +35,9 @@ internal sealed class Rules
     {
         var rules = JsonSerializer.Deserialize<Rules>(FileAccess.GetFileAsString(path))
             ?? throw new InvalidOperationException($"{path}: lege speldata.");
+        foreach (var (good, amount) in rules.StartingStock)
+            if (!rules.Goods.ContainsKey(good) || amount < 0)
+                throw new InvalidOperationException($"{path}: ongeldige startvoorraad voor {good}.");
         foreach (var (id, building) in rules.Buildings)
         {
             var goods = building.Cost.Keys.Concat(new[] { building.Input, building.Output }.OfType<string>());
@@ -40,11 +45,12 @@ internal sealed class Rules
                 if (!rules.Goods.ContainsKey(good))
                     throw new InvalidOperationException($"{path}: {id} verwijst naar onbekend goed {good}.");
             if (building.Cost.Values.Any(amount => amount <= 0) ||
+                (id != "stockyard" && building.BuildSeconds <= 0) ||
                 (building.Output != null && (building.Seconds <= 0 || building.Capacity <= 0)) ||
                 (building.Near != null && !Enum.TryParse<Terrain>(building.Near, out _)))
                 throw new InvalidOperationException($"{path}: ongeldige gebouwdata voor {id}.");
         }
-        foreach (string id in new[] { "stockyard", "quarry", "woodcamp", "sawmill" })
+        foreach (string id in new[] { "stockyard", "road", "quarry", "woodcamp", "sawmill" })
             if (!rules.Buildings.ContainsKey(id))
                 throw new InvalidOperationException($"{path}: ontbrekend gebouw {id}.");
         foreach (string task in new[] { "construction", "production" })
@@ -62,19 +68,48 @@ internal sealed class Building(string kind, Vector2I position, BuildingData data
     public Dictionary<string, int> Stock { get; } = new();
     public Dictionary<string, int> Delivered { get; } = new();
     public float Progress { get; set; }
-    public bool Complete => Data.Cost.All(cost => Delivered.GetValueOrDefault(cost.Key) >= cost.Value);
+    public float BuildProgress { get; set; }
+    public bool Supplied => Data.Cost.All(cost => Delivered.GetValueOrDefault(cost.Key) >= cost.Value);
+    public bool Complete => BuildProgress >= Data.BuildSeconds;
 }
 
 internal sealed record Delivery(Building Source, Building Destination, string Good, string Task);
 
-internal sealed class Carrier(Vector2I home)
+internal class Walker(Vector2I home)
 {
-    public Vector2I Tile { get; set; } = home;
-    public Vector2 Visual { get; set; } = home;
+    public Vector2I Tile { get; private set; } = home;
+    public Vector2 Visual { get; private set; } = home;
+    private readonly Queue<Vector2I> route = new();
+    private float progress;
+
+    public void SetRoute(List<Vector2I> path)
+    {
+        route.Clear();
+        foreach (var tile in path.Skip(1)) route.Enqueue(tile);
+    }
+
+    public bool Arrived(float seconds)
+    {
+        if (!route.TryPeek(out var next)) return true;
+        progress += seconds * 4.5f;
+        Visual = ((Vector2)Tile).Lerp(next, Mathf.Min(progress, 1));
+        if (progress < 1) return false;
+        progress = 0;
+        Tile = route.Dequeue();
+        return route.Count == 0;
+    }
+}
+
+internal sealed class Carrier(Vector2I home) : Walker(home)
+{
     public Delivery? Delivery { get; set; }
     public bool Loaded { get; set; }
-    public Queue<Vector2I> Route { get; } = new();
-    public float Progress { get; set; }
+}
+
+internal sealed class Builder(Vector2I home) : Walker(home)
+{
+    public Building? Site { get; set; }
+    public bool Working { get; set; }
 }
 
 internal sealed class Village
@@ -87,12 +122,16 @@ internal sealed class Village
     public HashSet<Vector2I> Roads { get; } = new() { Depot + Vector2I.Right };
     public List<Building> Buildings { get; } = new();
     public Carrier[] Carriers { get; } = { new(Depot + Vector2I.Right), new(Depot + Vector2I.Right) };
+    public Builder[] Builders { get; } = { new(Depot + Vector2I.Right) };
+    public Building Warehouse { get; }
     public bool Won { get; private set; }
 
     public Village(Rules rules)
     {
         Rules = rules;
-        Buildings.Add(new Building("stockyard", Depot, rules.Buildings["stockyard"]));
+        Warehouse = new Building("stockyard", Depot, rules.Buildings["stockyard"]);
+        foreach (var (good, amount) in rules.StartingStock) Warehouse.Stock.Add(good, amount);
+        Buildings.Add(Warehouse);
     }
 
     public static Terrain Ground(Vector2I tile)
@@ -112,14 +151,9 @@ internal sealed class Village
     public string? Place(string tool, Vector2I tile, bool preview = false)
     {
         if (!Inside(tile)) return "Buiten de kaart.";
-        if (tool == "road" && Walkable(tile)) return null;
+        if (tool == "road" && (Walkable(tile) || At(tile)?.Kind == "road")) return null;
         if (Ground(tile) != Terrain.Grass || At(tile) != null || Roads.Contains(tile))
             return "Kies een vrije grastegel.";
-        if (tool == "road")
-        {
-            if (!preview) Roads.Add(tile);
-            return null;
-        }
         var data = Rules.Buildings[tool];
         if (data.Near is string near && !Neighbors(tile).Any(next => Inside(next) && Ground(next).ToString() == near))
             return near == "Forest" ? "Plaats het kamp naast een bosvak." : "Plaats de groeve naast een rotsvak.";
@@ -165,26 +199,25 @@ internal sealed class Village
     {
         foreach (var source in Buildings)
         {
-            if (!source.Complete || source.Data.Output is not string good) continue;
-            int pendingPickup = Carriers.Count(other => !other.Loaded && other.Delivery?.Source == source);
-            if (source.Stock.GetValueOrDefault(good) <= pendingPickup) continue;
+            if (!source.Complete || source.Stock.Count == 0) continue;
             var pickup = FindRoute(carrier.Tile, Access(source));
             if (pickup == null) continue;
-            foreach (var destination in Buildings)
+            foreach (var (good, quantity) in source.Stock)
             {
-                if (destination == source) continue;
-                int incoming = Carriers.Count(other =>
-                    other.Delivery is { } delivery && delivery.Destination == destination && delivery.Good == good);
-                if (Demand(destination, good) > incoming && FindRoute(pickup[^1], Access(destination)) != null)
-                    yield return new Delivery(source, destination, good, destination.Complete ? "production" : "construction");
+                if (source != Warehouse && source.Data.Output != good) continue;
+                int pendingPickup = Carriers.Count(other => !other.Loaded &&
+                    other.Delivery is { } trip && trip.Source == source && trip.Good == good);
+                if (quantity <= pendingPickup) continue;
+                foreach (var destination in Buildings)
+                {
+                    if (destination == source) continue;
+                    int incoming = Carriers.Count(other =>
+                        other.Delivery is { } trip && trip.Destination == destination && trip.Good == good);
+                    if (Demand(destination, good) > incoming && FindRoute(pickup[^1], Access(destination)) != null)
+                        yield return new Delivery(source, destination, good, destination.Complete ? "production" : "construction");
+                }
             }
         }
-    }
-
-    private static void SetRoute(Carrier carrier, List<Vector2I> route)
-    {
-        carrier.Route.Clear();
-        foreach (var tile in route.Skip(1)) carrier.Route.Enqueue(tile);
     }
 
     private void Move(Carrier carrier, float seconds)
@@ -194,27 +227,20 @@ internal sealed class Village
             carrier.Delivery = Candidates(carrier)
                 .OrderByDescending(delivery => Rules.TaskPriority[delivery.Task])
                 .ThenByDescending(delivery => Rules.Goods[delivery.Good].Priority)
+                .ThenBy(delivery => delivery.Source == Warehouse)
                 .FirstOrDefault();
             if (carrier.Delivery == null) return;
-            SetRoute(carrier, FindRoute(carrier.Tile, Access(carrier.Delivery.Source))!);
+            carrier.SetRoute(FindRoute(carrier.Tile, Access(carrier.Delivery.Source))!);
         }
 
-        if (carrier.Route.TryPeek(out var next))
-        {
-            carrier.Progress += seconds * 3.5f;
-            carrier.Visual = ((Vector2)carrier.Tile).Lerp(next, Mathf.Min(carrier.Progress, 1));
-            if (carrier.Progress < 1) return;
-            carrier.Progress = 0;
-            carrier.Tile = carrier.Route.Dequeue();
-            return;
-        }
+        if (!carrier.Arrived(seconds)) return;
 
         var trip = carrier.Delivery;
         if (!carrier.Loaded)
         {
             trip.Source.Stock[trip.Good]--;
             carrier.Loaded = true;
-            SetRoute(carrier, FindRoute(carrier.Tile, Access(trip.Destination))!);
+            carrier.SetRoute(FindRoute(carrier.Tile, Access(trip.Destination))!);
             return;
         }
 
@@ -222,6 +248,30 @@ internal sealed class Village
         inventory[trip.Good] = inventory.GetValueOrDefault(trip.Good) + 1;
         carrier.Loaded = false;
         carrier.Delivery = null;
+    }
+
+    private void Build(Builder builder, float seconds)
+    {
+        if (builder.Site == null)
+        {
+            foreach (var site in Buildings)
+            {
+                if (site.Complete || !site.Supplied || Builders.Any(other => other.Site == site)) continue;
+                var route = FindRoute(builder.Tile, Access(site));
+                if (route == null) continue;
+                builder.Site = site;
+                builder.SetRoute(route);
+                break;
+            }
+        }
+
+        if (builder.Site is not Building target || !builder.Arrived(seconds)) return;
+        builder.Working = true;
+        target.BuildProgress = Math.Min(target.BuildProgress + seconds, target.Data.BuildSeconds);
+        if (!target.Complete) return;
+        if (target.Kind == "road") Roads.Add(target.Position);
+        builder.Site = null;
+        builder.Working = false;
     }
 
     public void Tick(float seconds)
@@ -240,5 +290,6 @@ internal sealed class Village
             if (building.Kind == "sawmill") Won = true;
         }
         foreach (var carrier in Carriers) Move(carrier, seconds);
+        foreach (var builder in Builders) Build(builder, seconds);
     }
 }

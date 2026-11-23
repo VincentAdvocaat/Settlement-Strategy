@@ -133,7 +133,8 @@ public partial class Main : Node2D
         }
         if (tool == "road")
         {
-            feedback = "Weg aangelegd. Sluit werkplaatsen aan op de weg bij de schuur.";
+            selected = village.At(tile);
+            feedback = "Weg gepland. De bezorger brengt steen, daarna bouwt de bouwer de tegel.";
             return;
         }
         selected = village.At(tile);
@@ -260,6 +261,17 @@ public partial class Main : Node2D
     private void DrawBuilding(Building building)
     {
         var pos = PositionOf(building.Position);
+        if (building.Kind == "road")
+        {
+            if (!building.Complete)
+            {
+                DrawRect(new Rect2(pos + Vector2.One * 8, Vector2.One * 26), Gold, false, 2);
+                DrawGood("base:stone", pos + Vector2.One * 21);
+            }
+            if (selected == building)
+                DrawRect(new Rect2(pos + Vector2.One * 2, Vector2.One * 38), Gold, false, 2);
+            return;
+        }
         Box(pos + new Vector2(3, 4), new Vector2(36, 36), new Color("#334037"));
         if (!building.Complete)
         {
@@ -293,30 +305,42 @@ public partial class Main : Node2D
         Text("en een houthakker naast het bos.", 784, 247, 15, Paper);
         Text("Verbind daarna de zagerij.", 784, 269, 15, Paper);
         DrawLine(new Vector2(784, 289), new Vector2(1069, 289), new Color("#42554a"));
-        var building = selected ?? village.Buildings.LastOrDefault(b => b.Kind == "sawmill");
-        if (building != null)
+        var building = selected ?? village.Buildings.LastOrDefault(b => b.Kind == "sawmill") ?? village.Warehouse;
+        Text(building.Data.Label, 784, 322, 21, Paper);
+        bool connected = village.Connected(building);
+        var builder = village.Builders.FirstOrDefault(worker => worker.Site == building);
+        string status = !connected ? "Wacht op een weg naar de schuur"
+            : building.Complete ? "Aangesloten op het wegennet"
+            : !building.Supplied ? "Wacht op bouwmateriaal"
+            : builder == null ? "Wacht op een vrije bouwer"
+            : builder.Working ? "Bouwer is aan het werk" : "Bouwer is onderweg";
+        Text(status, 784, 349, 15, building.Complete && connected ? Quiet : Gold);
+        float y = 381;
+        foreach (var (good, cost) in building.Data.Cost)
         {
-            Text(building.Data.Label, 784, 322, 21, Paper);
-            bool connected = village.Connected(building);
-            Text(connected ? "Aangesloten op het wegennet" : "Wacht op een weg naar de schuur",
-                784, 349, 15, connected ? Quiet : Gold);
-            float y = 381;
-            foreach (var (good, cost) in building.Data.Cost)
-            {
-                DrawGood(good, new Vector2(791, y - 5));
-                Text($"{village.Rules.Goods[good].Label} geleverd  {building.Delivered.GetValueOrDefault(good)} / {cost}",
-                    808, y, 15, Paper);
-                y += 24;
-            }
-            foreach (string good in new[] { building.Data.Input, building.Data.Output }.OfType<string>())
+            DrawGood(good, new Vector2(791, y - 5));
+            Text($"{village.Rules.Goods[good].Label} geleverd  {building.Delivered.GetValueOrDefault(good)} / {cost}",
+                808, y, 15, Paper);
+            y += 24;
+        }
+        if (!building.Complete)
+        {
+            Text($"Bouwvoortgang  {building.BuildProgress / building.Data.BuildSeconds:P0}", 784, y, 15, Paper);
+            Box(new Vector2(784, y + 10), new Vector2(284, 5), Ink);
+            Box(new Vector2(784, y + 10), new Vector2(284 * building.BuildProgress / building.Data.BuildSeconds, 5), Gold);
+        }
+        else
+        {
+            var goods = building == village.Warehouse
+                ? building.Stock.Keys
+                : new[] { building.Data.Input, building.Data.Output }.OfType<string>();
+            foreach (var good in goods)
             {
                 DrawGood(good, new Vector2(791, y - 5));
                 Text($"{village.Rules.Goods[good].Label} op voorraad  {building.Stock.GetValueOrDefault(good)}",
                     808, y, 15, Paper);
                 y += 24;
             }
-            if (building.Complete && building.Data.Input is string input && building.Stock.GetValueOrDefault(input) == 0)
-                Text("Wacht op boomstammen", 784, y, 15, Quiet);
         }
         if (village.Won)
         {
@@ -329,6 +353,8 @@ public partial class Main : Node2D
     {
         if (village == null) return;
         Text("Settlement Strategy", 28, 52, 34, Paper);
+        Text($"Magazijn   Steen {village.Warehouse.Stock.GetValueOrDefault("base:stone")}   •   Boomstammen {village.Warehouse.Stock.GetValueOrDefault("base:log")}", 540, 34, 16, Paper);
+        Text($"Vrije bouwers {village.Builders.Count(builder => builder.Site == null)}/{village.Builders.Length}   •   Vrije bezorgers {village.Carriers.Count(carrier => carrier.Delivery == null)}/{village.Carriers.Length}", 540, 56, 14, Quiet);
         for (int y = 0; y < Village.Height; y++)
         for (int x = 0; x < Village.Width; x++)
             DrawGround(new Vector2I(x, y));
@@ -345,6 +371,15 @@ public partial class Main : Node2D
                 DrawGood(trip.Good, center - new Vector2(0, 13));
             }
         }
+        foreach (var builder in village.Builders)
+        {
+            var center = PositionOf(builder.Visual) + new Vector2(20, 13);
+            if (builder.Working && builder.Site is { } site)
+                center = center.Lerp(PositionOf(site.Position) + new Vector2(21, 21), 0.65f);
+            DrawCircle(center, 8, Ink);
+            Shape(new Color("#8fcde9"), center + new Vector2(0, -6), center + new Vector2(6, 0),
+                center + new Vector2(0, 6), center + new Vector2(-6, 0));
+        }
         var hover = TileAt(GetGlobalMousePosition());
         if (Village.Inside(hover) && tool != "inspect")
         {
@@ -354,6 +389,10 @@ public partial class Main : Node2D
         }
         DrawPanel();
         Text(feedback, 28, 636, 17, Paper);
-        Text("1–5  Bouwgereedschap     Spatie  Pauzeren     Rechtermuisknop  Inspecteren", 28, 674, 14, Quiet);
+        string costs = tool == "inspect" ? "Blauwe ruit: bouwer   •   Ronde figuren: bezorgers"
+            : string.Join("   •   ", village.Rules.Buildings[tool].Cost.Select(
+                cost => $"{cost.Value} × {village.Rules.Goods[cost.Key].Label}"));
+        Text(costs, 28, 658, 14, Gold);
+        Text("1–5  Bouwgereedschap     Spatie  Pauzeren     Rechtermuisknop  Inspecteren", 28, 682, 14, Quiet);
     }
 }
